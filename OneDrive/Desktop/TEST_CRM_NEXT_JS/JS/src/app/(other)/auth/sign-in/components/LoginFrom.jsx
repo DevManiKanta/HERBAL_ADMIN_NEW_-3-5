@@ -84,139 +84,115 @@
 // export default LoginFrom;
 'use client';
 
+import React from 'react';
 import { useForm } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
-
-import TextFormInput from '@/components/form/TextFormInput';
-import PasswordFormInput from '@/components/form/PasswordFormInput';
 import Link from 'next/link';
 import { Button, FormCheck } from 'react-bootstrap';
-import { useRouter } from 'next/navigation';
-
-import { useAuth } from '../../../../../context/authContext';
+import { useAuth } from '@/context/authContext'; // adjust path if needed
 import useQueryParams from '@/hooks/useQueryParams';
 
+const loginSchema = yup.object({
+  username: yup.string().required('Please enter your username'),
+  password: yup.string().required('Please enter your password')
+});
+
 const LoginFrom = () => {
-  const router = useRouter();
   const { signIn, isLoading, clearAuthData } = useAuth();
   const queryParams = useQueryParams();
-  const loginSchema = yup.object({
-    email: yup.string().email('Please enter a valid email').required('Please enter your email'),
-    password: yup.string().required('Please enter your password')
-  });
+
   const {
-    control,
+    register,
     handleSubmit,
     setError,
-    clearErrors
+    clearErrors,
+    formState: { errors }
   } = useForm({
     resolver: yupResolver(loginSchema),
-    // defaultValues: {
-    //   email: 'user@demo.com',
-    //   password: '123456'
-    // }
+    defaultValues: { username: '', password: '' }
   });
 
   const onSubmit = async (values) => {
-    // clear previous server errors
+    console.log('🔔 onSubmit fired with values:', values);
+    if (isLoading) return;
     clearErrors();
 
     const redirectTo = queryParams['redirectTo'] ?? '/dashboard';
 
-    console.log('🎯 LoginForm: Starting login process');
-    console.log('📧 Email:', values.email);
-    console.log('🎯 Redirect to:', redirectTo);
-
     try {
-      // call your auth context signIn which should return a structured result
-      // expected shape: { ok: boolean, data?: any, error?: string | object }
-      console.log('📞 LoginForm: Calling signIn function...');
+      // values = { username, password } — your AuthContext.signIn should accept this
       const res = await signIn(values, { redirect: redirectTo });
-      console.log('📞 LoginForm: signIn response:', res);
+      console.log('🔔 signIn result:', res);
 
       if (!res?.ok) {
         const serverError = res?.error;
-
-        // handle object-shaped field errors (e.g. { email: 'Invalid', password: '...' })
         if (serverError && typeof serverError === 'object') {
+          // map field-level server errors to form fields (username/password/name)
           for (const key of Object.keys(serverError)) {
-            if (['email', 'password', 'name'].includes(key)) {
+            if (['username', 'password', 'name'].includes(key)) {
               setError(key, { type: 'server', message: String(serverError[key]) });
             }
           }
-
-          // if a general message exists and no field-specific errors, show it on email
-          if (!serverError.email && !serverError.password && serverError.message) {
-            setError('email', { type: 'server', message: String(serverError.message) });
+          // generic server message -> set on username field
+          if (!serverError.username && !serverError.password && serverError.message) {
+            setError('username', { type: 'server', message: String(serverError.message) });
           }
         } else {
-          // serverError is string or unknown
+          // serverError is string or unknown -> show on username
           const message = typeof serverError === 'string' ? serverError : (res?.error ?? 'Login failed');
-          setError('email', { type: 'server', message: String(message) });
+          setError('username', { type: 'server', message: String(message) });
         }
-        return;
       }
-
-      // success -> redirect is handled by the auth context
-      // No need for manual redirect here since signIn handles it
+      // on success, AuthContext handles persistence & redirect & notifications
     } catch (err) {
-      setError('email', { type: 'server', message: err?.message ?? 'An unexpected error occurred' });
-      console.error('LoginForm.signIn error:', err);
+      console.error('LoginFrom.onSubmit error:', err);
+      setError('username', { type: 'server', message: err?.message ?? 'An unexpected error occurred' });
     }
   };
 
   return (
-    <form className="authentication-form" onSubmit={handleSubmit(onSubmit)}>
-      <TextFormInput
-        control={control}
-        name="email"
-        containerClassName="mb-3"
-        label="Email"
-        id="email-id"
-        placeholder="Enter your email"
-      />
+    <form className="authentication-form" onSubmit={handleSubmit(onSubmit)} noValidate>
+      {/* USERNAME */}
+      <div className="mb-3">
+        <label htmlFor="username-id" className="form-label">Username</label>
+        <input
+          id="username-id"
+          type="text"
+          placeholder="Enter your username"
+          {...register('username')}
+          className={`form-control ${errors.username ? 'is-invalid' : ''}`}
+          autoComplete="username"
+        />
+        {errors.username && <div className="invalid-feedback">{errors.username.message}</div>}
+      </div>
 
-      <PasswordFormInput
-        control={control}
-        name="password"
-        containerClassName="mb-3"
-        placeholder="Enter your password"
-        id="password-id"
-        label={
-          <>
-            <Link href="/auth/reset-pass" className="float-end text-muted text-unline-dashed ms-1">
-              Reset password
-            </Link>
-            <label className="form-label" htmlFor="example-password">
-              Password
-            </label>
-          </>
-        }
-      />
+      {/* PASSWORD */}
+      <div className="mb-3">
+        <div className="d-flex justify-content-between align-items-center mb-1">
+          <label htmlFor="password-id" className="form-label mb-0">Password</label>
+          <Link href="/auth/reset-pass" className="text-muted text-unline-dashed ms-1">Reset password</Link>
+        </div>
+        <input
+          id="password-id"
+          type="password"
+          placeholder="Enter your password"
+          {...register('password')}
+          className={`form-control ${errors.password ? 'is-invalid' : ''}`}
+          autoComplete="current-password"
+        />
+        {errors.password && <div className="invalid-feedback">{errors.password.message}</div>}
+      </div>
 
+      {/* REMEMBER */}
       <div className="mb-3">
         <FormCheck label="Remember me" id="sign-in" />
       </div>
 
+      {/* SUBMIT */}
       <div className="mb-1 text-center d-grid">
         <Button variant="primary" type="submit" disabled={isLoading}>
           {isLoading ? 'Signing in...' : 'Sign In'}
-        </Button>
-      </div>
-      
-      {/* Debug button - remove in production */}
-      <div className="mb-1 text-center d-grid">
-        <Button 
-          variant="outline-danger" 
-          size="sm" 
-          onClick={() => {
-            clearAuthData();
-            console.log('🧹 Auth data cleared for testing');
-          }}
-          type="button"
-        >
-          Clear Auth Data (Debug)
         </Button>
       </div>
     </form>

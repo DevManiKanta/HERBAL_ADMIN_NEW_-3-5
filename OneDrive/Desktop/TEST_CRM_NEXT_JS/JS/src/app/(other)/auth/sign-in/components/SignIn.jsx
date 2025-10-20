@@ -38,12 +38,12 @@ const SignIn = () => {
                       </Link>
                     </div>
                   </div>
-                  <p className="text-danger text-center">
+                  {/* <p className="text-danger text-center">
                     Don&apos;t have an account?{' '}
                     <Link href="/auth/sign-up" className="text-dark fw-bold ms-1">
                       Sign Up
                     </Link>
-                  </p>
+                  </p> */}
                 </div>
               </Col>
             </Row>

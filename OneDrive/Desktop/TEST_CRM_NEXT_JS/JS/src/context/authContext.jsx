@@ -52,13 +52,12 @@
 
 // export const useAuth = () => useContext(AuthContext);
 
-
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import api from '@/lib/api'; // your api instance (axios-like)
-import { useNotificationContext } from '@/context/useNotificationContext'; // you already use this elsewhere
+import api from '@/lib/api'; // axios-like instance
+import { useNotificationContext } from '@/context/useNotificationContext';
 
 const AuthContext = createContext();
 
@@ -68,142 +67,135 @@ export const AuthProvider = ({ children }) => {
   const { push } = useRouter();
   const { showNotification } = useNotificationContext();
 
-
-  // endpoints — change if different
-  const LOGIN_API_URL = 'login'; // API base URL is already set in api.js
+  // API endpoints (relative to api.baseURL in your api instance)
+  const LOGIN_API_URL = 'login';
   const SIGNUP_API_URL = 'register';
 
   useEffect(() => {
-    // run once on mount to restore session if any
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('access_token');
-      const userData = localStorage.getItem('user_details');
+    // Restore from localStorage on mount (client-only)
+    if (typeof window === 'undefined') return;
 
-      console.log('🔍 AuthContext initialization:');
-      console.log('🔑 Token found:', !!token);
-      console.log('👤 User data found:', !!userData);
+    const token = localStorage.getItem('access_token');
+    const userData = localStorage.getItem('user_details');
 
-      if (token && userData) {
-        try {
-          const parsedUser = JSON.parse(userData);
-          console.log('✅ Restoring user from localStorage:', parsedUser);
-          setUser(parsedUser);
-        } catch (e) {
-          console.error('❌ AuthContext: failed to parse stored user', e);
-          // Clear invalid data
-          localStorage.removeItem('access_token');
-          localStorage.removeItem('user_details');
-        }
-      } else {
-        console.log('⚠️ No stored authentication data found');
+    if (token) {
+      api.defaults.headers.common = api.defaults.headers.common || {};
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (token && userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (e) {
+        console.error('AuthContext: failed to parse user_details', e);
+        localStorage.removeItem('user_details');
+        localStorage.removeItem('access_token');
       }
     }
     setIsLoading(false);
   }, []);
 
-  // signIn: calls API, stores token & user, updates state, shows notifications.
-  // options: { values, redirect } where values = { email, password }, redirect = '/dashboard' default
+  // Helper to persist token + user and set api auth header and cookie fallback
+  const persistAuth = (token, userObj) => {
+    if (typeof window === 'undefined') return;
+
+    // 1) store in localStorage
+    if (token) {
+      localStorage.setItem('access_token', token);
+    }
+    if (userObj) {
+      localStorage.setItem('user_details', JSON.stringify(userObj));
+      setUser(userObj);
+    }
+
+    // 2) set axios default Authorization header
+    api.defaults.headers.common = api.defaults.headers.common || {};
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    } else {
+      delete api.defaults.headers.common['Authorization'];
+    }
+
+    // 3) set a cookie named 'access_token' so middleware can read it
+    //    This is a client-side fallback only — server-set httpOnly cookie is preferred.
+    if (token) {
+      const days = 7; // lifetime in days for cookie fallback
+      const maxAge = 60 * 60 * 24 * days; // seconds
+      const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+      // SameSite=Lax allows middleware redirect to work while offering some CSRF protection
+      document.cookie = `access_token=${token}; Path=/; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+      console.log('AuthContext: cookie set (client-side) access_token (visible to JS).');
+    } else {
+      // remove cookie
+      document.cookie = 'access_token=; Path=/; Max-Age=0; SameSite=Lax';
+    }
+  };
+
+  // signIn: validate response contains token or user before redirecting
+  // Now expects values = { username, password }
   const signIn = async (values = {}, options = {}) => {
     const redirectTo = options.redirect ?? null;
+    if (!values?.username || !values?.password) {
+      showNotification({ message: 'Username and password are required', variant: 'danger' });
+      return { ok: false, error: 'Missing credentials' };
+    }
+
     setIsLoading(true);
-    
-    console.log('🚀 Starting signIn process...');
-    console.log('📧 Email:', values.email);
-    console.log('🔐 Password length:', values.password?.length);
-    console.log('🎯 Redirect to:', redirectTo);
-    
+
     try {
-      const body = {
-        email: values.email,
-        password: values.password
-      };
+      // send username instead of email
+      const payload = { username: values.username, password: values.password };
+      console.log('AuthContext.signIn: calling API', payload);
 
-      console.log('📤 Making API call to:', LOGIN_API_URL);
-      console.log('📤 Request body:', { email: body.email, password: '[HIDDEN]' });
-      
-      const res = await api.post(LOGIN_API_URL, body);
-      console.log('📥 Full response:', res);
-      
+      const res = await api.post(LOGIN_API_URL, payload);
       const data = res?.data ?? {};
-      console.log('📥 Login response data:', data);
 
-      // Handle different response structures
-      if (res?.status >= 200 && res?.status < 300) {
-        let token = null;
-        let userData = null;
-        
-        // Extract token and user data from various possible response structures
-        if (data?.token) {
-          token = data.token;
-        } else if (data?.access_token) {
-          token = data.access_token;
-        } else if (data?.data?.token) {
-          token = data.data.token;
-        }
-        
-        if (data?.user) {
-          userData = data.user;
-        } else if (data?.data?.user) {
-          userData = data.data.user;
-        } else if (data?.data) {
-          userData = data.data;
-        } else {
-          // fallback: create minimal user object
-          userData = { email: values.email, name: values.email };
-        }
-        
-        // Store token and user details in localStorage
-        if (typeof window !== 'undefined') {
-          if (token) {
-            localStorage.setItem('access_token', token);
-            console.log('✅ Token stored:', token.substring(0, 20) + '...');
-          }
-          if (userData) {
-            localStorage.setItem('user_details', JSON.stringify(userData));
-            setUser(userData);
-            console.log('✅ User data stored:', userData);
-          }
-        }
+      console.log('AuthContext.signIn: raw response data', data);
 
-        showNotification({
-          message: data?.message ?? 'Successfully logged in',
-          variant: 'success'
-        });
+      // Try to extract token & user in common shapes
+      const token =
+        data?.token ||
+        data?.access_token ||
+        data?.data?.token ||
+        null;
 
-        // Redirect if requested by options
-        if (redirectTo) {
-          console.log('🔄 Redirecting to:', redirectTo);
-          push(redirectTo);
-        }
+      const userData =
+        data?.user ||
+        data?.data?.user ||
+        (data?.data && typeof data.data === 'object' ? data.data : null) ||
+        null;
 
-        return { ok: true, data, token, user: userData };
-      } else {
-        const message = data?.message ?? data?.error ?? 'Login failed';
-        console.error('❌ Login failed:', message);
-        showNotification({ message, variant: 'danger' });
-        return { ok: false, error: message };
+      // If no token AND no userData, treat as failure (prevents redirect)
+      if (!token && !userData) {
+        const msg = data?.message ?? 'Invalid credentials or empty server response';
+        console.warn('AuthContext.signIn: missing token/user, aborting redirect:', data);
+        showNotification({ message: msg, variant: 'danger' });
+        return { ok: false, error: msg, data };
       }
+
+      // Persist auth and set header & cookie fallback
+      persistAuth(token, userData ?? { username: values.username });
+
+      showNotification({ message: data?.message ?? 'Successfully logged in', variant: 'success' });
+
+      // Redirect only after persistence
+      if (redirectTo) {
+        console.log('AuthContext.signIn: redirecting to', redirectTo);
+        push(redirectTo);
+      }
+
+      return { ok: true, data, token, user: userData };
     } catch (error) {
-      console.error('🚨 AuthContext.signIn error:', error);
-      console.error('🚨 Error response:', error?.response);
-      
-      // Enhanced error handling
+      console.error('AuthContext.signIn error:', error, error?.response?.data);
+      const resp = error?.response?.data;
       let message = 'An unexpected error occurred';
-      
-      if (error?.response?.data?.message) {
-        message = error.response.data.message;
-      } else if (error?.response?.data?.error) {
-        message = error.response.data.error;
-      } else if (error?.response?.status === 401) {
-        message = 'Invalid email or password';
-      } else if (error?.response?.status === 422) {
-        message = 'Please check your email and password';
-      } else if (error?.response?.status >= 500) {
-        message = 'Server error. Please try again later.';
-      } else if (error?.message) {
-        message = error.message;
-      }
-      
+
+      if (resp?.message) message = resp.message;
+      else if (resp?.error) message = resp.error;
+      else if (error?.response?.status === 401) message = 'Invalid username or password';
+      else if (error?.response?.status >= 500) message = 'Server error. Try again later.';
+      else if (error?.message) message = error.message;
+
       showNotification({ message, variant: 'danger' });
       return { ok: false, error: message };
     } finally {
@@ -211,108 +203,68 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // signUp: create user on backend, optionally auto-login
-  // options: { autoLogin: true/false, redirect: '/...' }
+  // signUp - create account and optionally auto-login
   const signUp = async (values = {}, options = {}) => {
     const { autoLogin = true, redirect = null } = options;
     setIsLoading(true);
-    
     try {
       const body = {
         name: values.name ?? values.fullName ?? '',
-        email: values.email,
+        // accept username and/or email for signup
+        username: values.username ?? undefined,
+        email: values.email ?? undefined,
         password: values.password,
         password_confirmation: values.password_confirmation ?? values.password
-        // attach other fields if needed
       };
 
-      console.log('📝 Attempting signup with:', body);
-      console.log('🌐 API URL:', SIGNUP_API_URL);
-      
+      // Remove undefined keys for cleanliness
+      Object.keys(body).forEach((k) => body[k] === undefined && delete body[k]);
+
+      console.log('AuthContext.signUp: calling API', body);
       const res = await api.post(SIGNUP_API_URL, body);
-      console.log('📥 Full signup response:', res);
-      
       const data = res?.data ?? {};
-      console.log('📥 Signup response data:', data);
 
-      if (res?.status >= 200 && res?.status < 300) {
-        showNotification({
-          message: data?.message ?? 'Account created successfully',
-          variant: 'success'
-        });
+      if (!(res?.status >= 200 && res?.status < 300)) {
+        const msg = data?.message ?? data?.error ?? 'Sign up failed';
+        showNotification({ message: msg, variant: 'danger' });
+        return { ok: false, error: msg };
+      }
 
-        // Optionally auto-login using returned token/user (common flows)
-        if (autoLogin) {
-          let token = null;
-          let userData = null;
-          
-          // Extract token and user data from various possible response structures
-          if (data?.token) {
-            token = data.token;
-          } else if (data?.access_token) {
-            token = data.access_token;
-          } else if (data?.data?.token) {
-            token = data.data.token;
-          }
-          
-          if (data?.user) {
-            userData = data.user;
-          } else if (data?.data?.user) {
-            userData = data.data.user;
-          } else if (data?.data) {
-            userData = data.data;
-          }
-          
-          // If signup response contains token/user, use them:
-          if (token && userData) {
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('access_token', token);
-              localStorage.setItem('user_details', JSON.stringify(userData));
-              console.log('✅ Signup auto-login: Token and user stored');
-            }
-            setUser(userData);
-            if (redirect) {
-              console.log('🔄 Signup redirecting to:', redirect);
-              push(redirect);
-            }
-            return { ok: true, data, token, user: userData };
-          }
+      showNotification({ message: data?.message ?? 'Account created', variant: 'success' });
 
-          // Otherwise try to login using credentials we just created
-          console.log('🔄 Signup: Attempting auto-login with credentials');
-          const loginResult = await signIn({ email: values.email, password: values.password }, { redirect });
-          return loginResult;
+      // Auto-login if requested and returned token/user present
+      if (autoLogin) {
+        const token =
+          data?.token ||
+          data?.access_token ||
+          data?.data?.token ||
+          null;
+        const userData =
+          data?.user ||
+          data?.data?.user ||
+          (data?.data && typeof data.data === 'object' ? data.data : null);
+
+        if (token || userData) {
+          persistAuth(token, userData);
+          if (redirect) push(redirect);
+          return { ok: true, data, token, user: userData };
         }
 
-        // If not autoLogin, return success
-        return { ok: true, data };
-      } else {
-        const message = data?.message ?? data?.error ?? 'Sign up failed';
-        console.error('❌ Signup failed:', message);
-        showNotification({ message, variant: 'danger' });
-        return { ok: false, error: message };
+        // fallback to explicit sign-in attempt
+        const identifier = values.username ?? values.email;
+        return await signIn({ username: identifier, password: values.password }, { redirect });
       }
+
+      return { ok: true, data };
     } catch (error) {
-      console.error('🚨 AuthContext.signUp error:', error);
-      console.error('🚨 Error response:', error?.response);
-      
-      // Enhanced error handling
+      console.error('AuthContext.signUp error:', error);
+      const resp = error?.response?.data;
       let message = 'An unexpected error occurred';
-      
-      if (error?.response?.data?.message) {
-        message = error.response.data.message;
-      } else if (error?.response?.data?.error) {
-        message = error.response.data.error;
-      } else if (error?.response?.status === 422) {
-        message = 'Please check your input data';
-      } else if (error?.response?.status === 409) {
-        message = 'Email already exists';
-      } else if (error?.response?.status >= 500) {
-        message = 'Server error. Please try again later.';
-      } else if (error?.message) {
-        message = error.message;
-      }
-      
+      if (resp?.message) message = resp.message;
+      else if (resp?.error) message = resp.error;
+      else if (error?.response?.status >= 500) message = 'Server error';
+      else if (error?.message) message = error.message;
+
       showNotification({ message, variant: 'danger' });
       return { ok: false, error: message };
     } finally {
@@ -320,34 +272,44 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    console.log('🚪 Logging out user...');
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('user_details');
-      console.log('✅ LocalStorage cleared');
+  const logout = async () => {
+    try {
+      localStorage.clear()
+    } catch (e) {
+      console.warn('AuthContext.logout: server logout failed', e);
+    } finally {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user_details');
+      }
+      api.defaults.headers.common = api.defaults.headers.common || {};
+      delete api.defaults.headers.common['Authorization'];
+      // remove cookie
+      if (typeof document !== 'undefined') {
+        document.cookie = 'access_token=; Path=/; Max-Age=0; SameSite=Lax';
+      }
+      setUser(null);
+      setIsLoading(false);
+      showNotification({ message: 'Logged out', variant: 'success' });
+      push('/auth/sign-in');
     }
-    setUser(null);
-    showNotification({
-      message: 'Successfully logged out',
-      variant: 'success'
-    });
-    push('/auth/sign-in'); 
   };
 
-  // Helper function to clear all auth data (for debugging)
   const clearAuthData = () => {
-    console.log('🧹 Clearing all authentication data...');
     if (typeof window !== 'undefined') {
       localStorage.removeItem('access_token');
       localStorage.removeItem('user_details');
-      console.log('✅ All auth data cleared from localStorage');
+    }
+    api.defaults.headers.common = api.defaults.headers.common || {};
+    delete api.defaults.headers.common['Authorization'];
+    if (typeof document !== 'undefined') {
+      document.cookie = 'access_token=; Path=/; Max-Age=0; SameSite=Lax';
     }
     setUser(null);
     setIsLoading(false);
+    console.log('AuthContext: cleared auth data');
   };
 
-  // The context value exposes user, setUser, isLoading, signIn, signUp, logout, clearAuthData
   return (
     <AuthContext.Provider value={{ user, setUser, isLoading, signIn, signUp, logout, clearAuthData }}>
       {children}
@@ -356,4 +318,6 @@ export const AuthProvider = ({ children }) => {
 };
 
 export const useAuth = () => useContext(AuthContext);
+
+
 
