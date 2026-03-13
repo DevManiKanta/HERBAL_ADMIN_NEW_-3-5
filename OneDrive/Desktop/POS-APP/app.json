@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Smart Billing App",
+    "slug": "smart-billing-app",
+    "version": "1.0.0",
+    "sdkVersion": "54.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.smartbilling.app"
+    },
+    "android": {
+      "package": "com.smartbilling.app",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6f5865e9-d1de-4413-afae-5d310fb7d403"
+      }
+    }
+  }
+}
